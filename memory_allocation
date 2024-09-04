@@ -1,0 +1,66 @@
+#include <cheriintrin.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_IP_LENGTH 16
+
+// Define memory regions (capabilities) for the two IDS rules
+char * __capability unauthorized_ips_region1;
+char * __capability unauthorized_ips_region2;
+
+void setup_memory_regions() {
+    // Allocate and set bounds for memory regions
+    unauthorized_ips_region1 = (__cheri_tocap char * __capability) malloc(MAX_IP_LENGTH);
+    unauthorized_ips_region2 = (__cheri_tocap char * __capability) malloc(MAX_IP_LENGTH);
+    
+    // Set bounds and permissions (read-only for IP checking)
+    unauthorized_ips_region1 = cheri_bounds_set(unauthorized_ips_region1, MAX_IP_LENGTH);
+    unauthorized_ips_region2 = cheri_bounds_set(unauthorized_ips_region2, MAX_IP_LENGTH);
+
+    // Add an unauthorized IP in each region
+    strncpy(unauthorized_ips_region1, "192.168.1.100", MAX_IP_LENGTH);
+    strncpy(unauthorized_ips_region2, "192.168.1.101", MAX_IP_LENGTH);
+}
+
+int check_unauthorized_ip(const char* ip, char * __capability region) {
+    // Compare the given IP with the one stored in the region
+    if (strncmp(ip, region, MAX_IP_LENGTH) == 0) {
+        return 1; // IP found in this region
+    }
+    return 0; // IP not found
+}
+
+void process_packet(const char* packet_ip) {
+    // Check if packet IP matches any unauthorized IP in region 1
+    if (check_unauthorized_ip(packet_ip, unauthorized_ips_region1)) {
+        printf("Alert: Unauthorized IP detected in Memory Region 1: %s\n", packet_ip);
+    }
+    // Check if packet IP matches any unauthorized IP in region 2
+    else if (check_unauthorized_ip(packet_ip, unauthorized_ips_region2)) {
+        printf("Alert: Unauthorized IP detected in Memory Region 2: %s\n", packet_ip);
+    } else {
+        printf("Packet from authorized IP: %s\n", packet_ip);
+    }
+}
+
+int main() {
+    // Setup memory regions for unauthorized IPs
+    setup_memory_regions();
+
+    // Simulated packet IPs for testing
+    const char* test_packet1 = "192.168.1.100";
+    const char* test_packet2 = "192.168.1.101";
+    const char* test_packet3 = "192.168.1.102";
+
+    // Process packets
+    process_packet(test_packet1);  // Should trigger alert for region 1
+    process_packet(test_packet2);  // Should trigger alert for region 2
+    process_packet(test_packet3);  // Should pass as authorized IP
+
+    // Free allocated memory
+    free(unauthorized_ips_region1);
+    free(unauthorized_ips_region2);
+
+    return 0;
+}
