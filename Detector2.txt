@@ -1,0 +1,66 @@
+nano Detector2.py
+
+from scapy.all import sniff, IP, UDP
+import logging
+import threading
+import time
+import paho.mqtt.client as mqtt
+
+# Configure logging
+logging.basicConfig(filename='alerts.log', level=logging.INFO, format='%(asctime)s - %(message)s')
+
+# IP and port of the specific generator to monitor
+GENERATOR_IP = "192.168.1.11"
+GENERATOR_PORT = 30490
+
+# MQTT configuration
+MQTT_BROKER = "localhost"
+MQTT_PORT = 1883
+MQTT_TOPIC = "network/alerts"
+
+# Initialize MQTT client
+mqtt_client = mqtt.Client()
+mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+
+alert_detected = threading.Event()
+
+def packet_callback(packet):
+    if packet.haslayer(IP) and packet.haslayer(UDP):
+        ip_layer = packet.getlayer(IP)
+        udp_layer = packet.getlayer(UDP)
+       # Check if the packet is from the specific generator
+        if ip_layer.src == GENERATOR_IP and udp_layer.sport == GENERATOR_PORT:
+            alert_message = f"Alert: Packet detected from {GENERATOR_IP}:{GENERATOR_PORT}"
+            packet_details = {
+                "IP": ip_layer.src,
+                "Port": udp_layer.sport,
+                "Length": len(packet),
+                "Payload": bytes(packet[UDP].payload).decode('utf-8', errors='replace')
+            }
+
+            # Log the alert and packet details
+            print(f"Alert: Packet detected from IP: {ip_layer.src}, Port: {udp_layer.sport}")
+
+            # Send the alert and packet details through MQTT
+            mqtt_message = f"{alert_message} - {packet_details}"
+            mqtt_client.publish(MQTT_TOPIC, str(packet_details))
+
+            alert_detected.set()  # Set the event to indicate an alert was detected
+
+def display_scanning():
+    while True:
+        if not alert_detected.is_set():
+            print("Scanning...")
+        else:
+            alert_detected.clear()  # Clear the event for the next cycle
+        time.sleep(5)  # Adjust the interval as needed
+
+# Start the scanning display in a separate thread
+scanning_thread = threading.Thread(target=display_scanning)
+scanning_thread.daemon = True
+scanning_thread.start()
+
+# Start sniffing
+print(f"Starting to scan")
+sniff(filter=f"udp and src host {GENERATOR_IP} and src port {GENERATOR_PORT}", prn=packet_callback)
+
