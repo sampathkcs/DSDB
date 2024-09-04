@@ -1,0 +1,28 @@
+nano ECU.py
+
+from scapy.all import *
+import time
+
+class SOMEIP(Packet):
+    name = "SOMEIP"
+    fields_desc = [
+        ShortField("service_id", 0x1234),
+        ShortField("method_id", 0x5678),
+        IntField("length", 12),
+        ShortField("client_id", 0x0001),
+        ShortField("session_id", 0x0001),
+        ByteField("protocol_version", 1),
+        ByteField("interface_version", 1),
+        ByteField("message_type", 0x00),
+        ByteField("return_code", 0x00),
+        StrField("payload", "Some/IP payload from 172.20.10.4")
+    ]
+
+try:
+    while True:
+        packet = Ether()/IP(src="172.20.10.4", dst="192.168.1.11")/UDP(sport=30491, dport=30491)/SOMEIP()
+        sendp(packet, iface="ens33")  # Use the correct interface name
+        time.sleep(1)  # Send a packet every second
+except KeyboardInterrupt:
+    print("Packet sending stopped.")
+
