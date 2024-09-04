@@ -1,0 +1,125 @@
+from scapy.all import sniff, IP, UDP
+import logging
+import threading
+import time
+import paho.mqtt.client as mqtt
+
+# Configure logging
+logging.basicConfig(filename='alerts.log', level=logging.INFO, format='%(asctime)s - %(message)s')
+
+# IP and port of the specific generator to monitor
+GENERATOR_IP = "192.168.1.11"
+GENERATOR_PORT = 30490
+
+# Unauthorized IP list divided into separate "memory regions"
+UNAUTHORIZED_IPS_REGION_1 = ["192.168.1.100"]  # Simulated memory region 1
+UNAUTHORIZED_IPS_REGION_2 = ["192.168.1.101"]  # Simulated memory region 2
+
+# Max UDP packet size to monitor (in bytes)
+MAX_PACKET_SIZE = 512
+
+# Port range to monitor for suspicious traffic
+SUSPICIOUS_PORT_RANGE = range(40000, 50000)
+
+# MQTT configuration
+MQTT_BROKER = "localhost"
+MQTT_PORT = 1883
+MQTT_TOPIC = "network/alerts"
+
+# Initialize MQTT client
+mqtt_client = mqtt.Client()
+mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+
+alert_detected = threading.Event()
+
+def check_unauthorized_ip(ip):
+    """Simulate checking different memory locations for unauthorized IPs."""
+    # Simulate memory region 1
+    if ip in UNAUTHORIZED_IPS_REGION_1:
+        return True, "Memory Region 1"
+    
+    # Simulate memory region 2
+    elif ip in UNAUTHORIZED_IPS_REGION_2:
+        return True, "Memory Region 2"
+    
+    return False, None
+
+def packet_callback(packet):
+    if packet.haslayer(IP) and packet.haslayer(UDP):
+        ip_layer = packet.getlayer(IP)
+        udp_layer = packet.getlayer(UDP)
+
+        # Rule 1: Check if the packet is from the specific generator
+        if ip_layer.src == GENERATOR_IP and udp_layer.sport == GENERATOR_PORT:
+            alert_message = f"Alert: Packet detected from {GENERATOR_IP}:{GENERATOR_PORT}"
+            packet_details = {
+                "IP": ip_layer.src,
+                "Port": udp_layer.sport,
+                "Length": len(packet),
+                "Payload": bytes(packet[UDP].payload).decode('utf-8', errors='replace')
+            }
+            log_and_alert(alert_message, packet_details)
+
+        # Rule 2: Check if packet is from unauthorized IPs using separate memory regions
+        unauthorized, region = check_unauthorized_ip(ip_layer.src)
+        if unauthorized:
+            alert_message = f"Alert: Packet detected from unauthorized IP {ip_layer.src} (Found in {region})"
+            packet_details = {
+                "IP": ip_layer.src,
+                "Port": udp_layer.sport,
+                "Length": len(packet),
+                "Payload": bytes(packet[UDP].payload).decode('utf-8', errors='replace')
+            }
+            log_and_alert(alert_message, packet_details)
+
+        # Rule 3: Check for large UDP packet sizes
+        elif len(packet) > MAX_PACKET_SIZE:
+            alert_message = f"Alert: Large packet detected from IP {ip_layer.src}, Size: {len(packet)} bytes"
+            packet_details = {
+                "IP": ip_layer.src,
+                "Port": udp_layer.sport,
+                "Length": len(packet),
+                "Payload": bytes(packet[UDP].payload).decode('utf-8', errors='replace')
+            }
+            log_and_alert(alert_message, packet_details)
+
+        # Rule 4: Check if the packet is from a suspicious port range
+        elif udp_layer.sport in SUSPICIOUS_PORT_RANGE:
+            alert_message = f"Alert: Packet detected from suspicious port {udp_layer.sport}"
+            packet_details = {
+                "IP": ip_layer.src,
+                "Port": udp_layer.sport,
+                "Length": len(packet),
+                "Payload": bytes(packet[UDP].payload).decode('utf-8', errors='replace')
+            }
+            log_and_alert(alert_message, packet_details)
+
+
+def log_and_alert(alert_message, packet_details):
+    # Log the alert and packet details
+    print(alert_message)
+    logging.info(f"{alert_message} - {packet_details}")
+
+    # Send the alert and packet details through MQTT
+    mqtt_client.publish(MQTT_TOPIC, str(packet_details))
+
+    alert_detected.set()  # Set the event to indicate an alert was detected
+
+
+def display_scanning():
+    while True:
+        if not alert_detected.is_set():
+            print("Scanning...")
+        else:
+            alert_detected.clear()  # Clear the event for the next cycle
+        time.sleep(5)  # Adjust the interval as needed
+
+
+# Start the scanning display in a separate thread
+scanning_thread = threading.Thread(target=display_scanning)
+scanning_thread.daemon = True
+scanning_thread.start()
+
+# Start sniffing with UDP filter
+print(f"Starting to scan")
+sniff(filter="udp", prn=packet_callback)
