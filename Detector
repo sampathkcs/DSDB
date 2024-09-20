@@ -1,66 +1,58 @@
-#include <cheriintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
 
-#define MAX_IP_LENGTH 16
+// Define the IP address and port of the SOME/IP generator
+#define GENERATOR_IP "192.168.1.11"
 
-// Define memory regions (capabilities) for the two IDS rules
-char * __capability unauthorized_ips_region1;
-char * __capability unauthorized_ips_region2;
+// Function to sniff packets and check for specific IP
+void sniff_packets() {
+    int sockfd;
+    char buffer[65536];
+    struct sockaddr_in source_addr;
+    socklen_t addr_len = sizeof(source_addr);
 
-void setup_memory_regions() {
-    // Allocate and set bounds for memory regions
-    unauthorized_ips_region1 = (__cheri_tocap char * __capability) malloc(MAX_IP_LENGTH);
-    unauthorized_ips_region2 = (__cheri_tocap char * __capability) malloc(MAX_IP_LENGTH);
-    
-    // Set bounds and permissions (read-only for IP checking)
-    unauthorized_ips_region1 = cheri_bounds_set(unauthorized_ips_region1, MAX_IP_LENGTH);
-    unauthorized_ips_region2 = cheri_bounds_set(unauthorized_ips_region2, MAX_IP_LENGTH);
-
-    // Add an unauthorized IP in each region
-    strncpy(unauthorized_ips_region1, "192.168.1.100", MAX_IP_LENGTH);
-    strncpy(unauthorized_ips_region2, "192.168.1.101", MAX_IP_LENGTH);
-}
-
-int check_unauthorized_ip(const char* ip, char * __capability region) {
-    // Compare the given IP with the one stored in the region
-    if (strncmp(ip, region, MAX_IP_LENGTH) == 0) {
-        return 1; // IP found in this region
+    // Create a raw socket to sniff UDP packets
+    if ((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
     }
-    return 0; // IP not found
-}
 
-void process_packet(const char* packet_ip) {
-    // Check if packet IP matches any unauthorized IP in region 1
-    if (check_unauthorized_ip(packet_ip, unauthorized_ips_region1)) {
-        printf("Alert: Unauthorized IP detected in Memory Region 1: %s\n", packet_ip);
+    printf("Starting to sniff packets...\n");
+
+    // Continuously sniff packets
+    while (1) {
+        // Receive a packet
+        int packet_size = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&source_addr, &addr_len);
+        if (packet_size < 0) {
+            perror("Packet receive failed");
+            continue;
+        }
+
+        // Extract the IP header
+        struct iphdr *iph = (struct iphdr *)(buffer);
+
+        // Convert source IP to human-readable format
+        struct in_addr source_ip;
+        source_ip.s_addr = iph->saddr;
+
+        // Check if the packet is from the specific IP
+        if (strcmp(inet_ntoa(source_ip), GENERATOR_IP) == 0) {
+            printf("Detected packet from SOME/IP generator at %s\n", inet_ntoa(source_ip));
+        }
     }
-    // Check if packet IP matches any unauthorized IP in region 2
-    else if (check_unauthorized_ip(packet_ip, unauthorized_ips_region2)) {
-        printf("Alert: Unauthorized IP detected in Memory Region 2: %s\n", packet_ip);
-    } else {
-        printf("Packet from authorized IP: %s\n", packet_ip);
-    }
+
+    // Close the socket (though the program runs indefinitely)
+    close(sockfd);
 }
 
 int main() {
-    // Setup memory regions for unauthorized IPs
-    setup_memory_regions();
-
-    // Simulated packet IPs for testing
-    const char* test_packet1 = "192.168.1.100";
-    const char* test_packet2 = "192.168.1.101";
-    const char* test_packet3 = "192.168.1.102";
-
-    // Process packets
-    process_packet(test_packet1);  // Should trigger alert for region 1
-    process_packet(test_packet2);  // Should trigger alert for region 2
-    process_packet(test_packet3);  // Should pass as authorized IP
-
-    // Free allocated memory
-    free(unauthorized_ips_region1);
-    free(unauthorized_ips_region2);
+    // Start sniffing packets
+    sniff_packets();
 
     return 0;
 }
