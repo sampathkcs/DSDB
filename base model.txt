@@ -1,24 +1,72 @@
-# Update and upgrade system
-sudo apt update
-sudo apt upgrade
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
+#include <sys/socket.h>
+#include <net/ethernet.h>
+#include <pthread.h>
 
-# Install Python 3 and venv
-sudo apt install python3 python3-venv python3-pip
+#define SRC_IP "192.168.1.11"
+#define DST_IP "172.20.10.4"
+#define SRC_PORT 30490
+#define DST_PORT 30490
 
-# Create and activate virtual environment
-python3 -m venv someip_env
-source someip_env/bin/activate
+struct someip {
+    uint16_t service_id;
+    uint16_t method_id;
+    uint32_t length;
+    uint16_t client_id;
+    uint16_t session_id;
+    uint8_t protocol_version;
+    uint8_t interface_version;
+    uint8_t message_type;
+    uint8_t return_code;
+    char payload[32];
+};
 
-# Install scapy
-pip install scapy
+void send_packet() {
+    int sockfd;
+    struct sockaddr_in dest_addr;
+    char packet[1500];
 
-# Write the Python script
-nano send_someip.py
-# (Paste the following code into nano)
-# from scapy.all import Ether, IP, UDP, Raw, sendp
-# packet = Ether()/IP(dst="127.0.0.1")/UDP()/Raw(load="Some/IP payload")
-# sendp(packet)
-# (Save and exit nano)
+    // Create raw socket
+    if ((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
 
-# Run the script with sudo
-sudo someip_env/bin/python send_someip.py
+    // Destination address
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(DST_PORT);
+    inet_pton(AF_INET, DST_IP, &dest_addr.sin_addr);
+
+    // Build the SOME/IP packet
+    struct someip someip_pkt;
+    someip_pkt.service_id = htons(0x1234);
+    someip_pkt.method_id = htons(0x5678);
+    someip_pkt.length = htonl(12);
+    someip_pkt.client_id = htons(0x0001);
+    someip_pkt.session_id = htons(0x0001);
+    someip_pkt.protocol_version = 1;
+    someip_pkt.interface_version = 1;
+    someip_pkt.message_type = 0x00;
+    someip_pkt.return_code = 0x00;
+    strcpy(someip_pkt.payload, "Some/IP payload from 192.168.1.11");
+
+    // Send the packet in a loop every second
+    while (1) {
+        sendto(sockfd, &someip_pkt, sizeof(someip_pkt), 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+        printf("Sent SOME/IP packet to %s:%d\n", DST_IP, DST_PORT);
+        sleep(1);
+    }
+
+    close(sockfd);
+}
+
+int main() {
+    send_packet();
+    return 0;
+}
